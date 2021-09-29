@@ -3,5 +3,7 @@
     <column>
         <name>saldo</name>
         <type>double precision</type>
+        <null>NO</null>
+        <default>0</default>
     </column>
 </table>
