@@ -1,4 +1,5 @@
 <?php
+
 namespace FacturaScripts\Plugins\SaldosPartidas;
 
 use FacturaScripts\Core\Base\DataBase;
@@ -9,83 +10,75 @@ use FacturaScripts\Core\Model\Subcuenta;
 use FacturaScripts\Dinamic\Model\Partida;
 use FacturaScripts\Plugins\SaldosPartidas\Model\Join\PartidaAsiento;
 
-class Cron extends \FacturaScripts\Core\Base\CronClass
-{
-    public function run() 
-    {
-        $nameOfJob = 'FS_Calculate_Balances';
-        if ($this->isTimeForJob($nameOfJob, "1 hours")) {
+class Cron extends \FacturaScripts\Core\Base\CronClass {
+
+    const JOB_NAME = 'Calculate_Balances';
+
+    public function run() {
+        if ($this->isTimeForJob(self::JOB_NAME, "1 hours")) {
             $this->calculateBalances();
-            $this->jobDone($nameOfJob);
+            $this->jobDone(self::JOB_NAME);
         }
     }
-    
-    protected function calculateBalances() 
-    {
+
+    protected function calculateBalances() {
         $dataBase = new DataBase();
         $dataBase->beginTransaction();
-        
-        $ejercicios = new Ejercicio();
 
-//error_log(var_dump($ejercicios), 3, "c:/jero/my-errors.log");
-        
-        foreach ($ejercicios->all() as $ejercicio) 
-        {
-            if (strtoupper(trim($ejercicio->estado)) !== 'ABIERTO') {
+        $ejercicioModel = new Ejercicio();
+
+//error_log(var_dump($ejercicioModel), 3, "c:/jero/my-errors.log");
+
+        foreach ($ejercicioModel->all() as $ejercicio) {
+            if (!$ejercicio->isOpened()) {
                 continue;
             }
-            
+
             if (false === $this->CalculateBalancesOfExercise($ejercicio)) {
                 $dataBase->rollback();
                 return;
             }
         }
-        
+
         $dataBase->commit();
         return;
     }
-    
-    protected function CalculateBalancesOfExercise(Ejercicio $ejercicio): bool 
-    {
-        $subcuentas = new Subcuenta();
-        
-        foreach ($subcuentas->all([new DataBaseWhere('codejercicio', $ejercicio->codejercicio)]) as $subcuenta) 
-        {
+
+    protected function CalculateBalancesOfExercise(Ejercicio $ejercicio): bool {
+        $subcuentaModel = new Subcuenta();
+        $where = [new DataBaseWhere('codejercicio', $ejercicio->codejercicio)];
+        foreach ($subcuentaModel->all($where, [], 0, 0) as $subcuenta) {
             if (false === $this->CalculateBalancesOfSubAcount($subcuenta)) {
                 return false;
             }
         }
-        
+
         return true;
     }
 
-    protected function CalculateBalancesOfSubAcount(Subcuenta $subcuenta): bool 
-    {
+    protected function CalculateBalancesOfSubAcount(Subcuenta $subcuenta): bool {
+        $partidasAsientoModel = new PartidaAsiento();
+        $where = [new DataBaseWhere('idsubcuenta', $subcuenta->idsubcuenta)];
+        $order = ['fecha' => 'ASC'];
+
         $saldo = (float) 0.0;
-        $partidasAsientos = new PartidaAsiento();
 
-        foreach ( $partidasAsientos->all( [new DataBaseWhere('idsubcuenta', $subcuenta->idsubcuenta)] // Where
-                                        , ['fecha' => 'ASC'] // Order
-                                        , 0 // offset
-                                        , 0 // limit
-                                        ) as $partidaAsiento ) 
-        {
-            $saldo += ($partidaAsiento->debe - $partidaAsiento->haber);
+        foreach ($partidasAsientoModel->all($where, $order, 0, 0) as $partidaAsiento) {
+            $saldo += $partidaAsiento->debe - $partidaAsiento->haber;
 
-            if ($saldo === $partidaAsiento->saldo)
-            {
+            if ($saldo === $partidaAsiento->saldo) {
                 continue;
             }
 
             $partida = new Partida();
 
-            if (false === $partida->loadFromCode($partidaAsiento->idpartida)) 
-            {
+            if (false === $partida->loadFromCode($partidaAsiento->idpartida)) {
                 return false; // Es imposible que no encuentre la partida en una transacción, pero por lo menos no anido ifs
             }
-
-            if (false === $partida->save())
-            {
+            
+            $partida->saldo = $saldo;
+            
+            if (false === $partida->save()) {
                 return false;
             }
         }
@@ -93,6 +86,4 @@ class Cron extends \FacturaScripts\Core\Base\CronClass
         return true;
     }
 
-    
 }
-
